@@ -18,7 +18,7 @@ i3twm_data = i3twm.get_fdata()
 i3tcsf_data = i3tcsf.get_fdata()
 
 #Get slices
-cut = 250
+cut = 180
 
 slice_tot = i3t_data[:, cut, :].T
 slice_gm = i3tgm_data[:, cut, :].T
@@ -43,9 +43,9 @@ slice_csf = (slice_csf/256).astype(np.uint8)
 # axes.imshow(slice_gm, cmap="gray", origin="lower")
 # plt.show()
 
-# cv2.imshow('sin filtros', slice_gm)
-# cv2.waitKey(0)
-# cv2.destroyAllWindows()
+cv2.imshow('sin filtros', slice_gm)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
 #Conver to color and overlay the three slices of the different fluids
 
 # slice_gm = cv2.cvtColor(slice_gm, cv2.COLOR_GRAY2BGR)
@@ -115,7 +115,7 @@ ret, thresh_gm = cv2.threshold(slice_gm, 127, 255, cv2.THRESH_OTSU)
 ret, thresh_wm = cv2.threshold(slice_wm, 127, 255, cv2.THRESH_OTSU)
 ret, thresh_csf = cv2.threshold(slice_csf, 127, 255, cv2.THRESH_OTSU)
 
-slice_gm, contours_gm, hierarchy_gm = cv2.findContours(thresh_gm, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+slice_gm, contours_gm, hierarchy_gm = cv2.findContours(thresh_gm, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 slice_wm, contours_wm, hierarchy_wm = cv2.findContours(thresh_wm, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 image_csf, contours_csf, hierarchy_csf = cv2.findContours(thresh_csf, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -125,29 +125,63 @@ slice_tot = cv2.cvtColor(slice_tot, cv2.COLOR_GRAY2BGR)
 # slice_gm = cv2.cvtColor(slice_gm, cv2.COLOR_GRAY2BGR)
 # slice_wm = cv2.cvtColor(slice_wm, cv2.COLOR_GRAY2BGR)
 # slice_csf = cv2.cvtColor(slice_csf, cv2.COLOR_GRAY2BGR)
+print slice_tot.shape
 
 min_thresh = 0
+
+def checkLobe(cnt, hierarchy, slice):
+    y, x = slice.shape
+    leftmost = tuple(cnt[cnt[:,:,0].argmin()][0])
+    rightmost = tuple(cnt[cnt[:, :, 0].argmax()][0])
+    topmost = tuple(cnt[cnt[:,:,1].argmin()][0])
+
+
+
+    #Temporal lobe shouldn't be longer than half size of the image (x axis)
+    if (rightmost[0] - leftmost[0]) > x/2:
+        return False
+
+    #Temporal lobe shouldn't be higher than half of the image (y axis)
+    if topmost[1] > y/2:
+        return False
+
+    #Temporal lobe would be an external contour, so it shouldn't have parent or child
+    if hierarchy[2] != -1 and hierarchy[3] != -1:
+        return False
+
+
+    print hierarchy
+    print ("x = " + str(x))
+    print ("y = " + str(y))
+    print ("leftmost = " + str(leftmost))
+    print ("topmost = " + str(topmost))
+    print ("topmost (y) = " + str(topmost[1]))
+    return True
 
 for i in range(len(contours_gm)):
     # color = (random.randint(50, 255), random.randint(50, 255), random.randint(50, 255))
     #cv2.drawContours(slice_tot, contours, i, color, cv2.FILLED)
     if cv2.contourArea(contours_gm[i]) > min_thresh:
-        #cv2.drawContours(slice_gm, contours_gm, i, (0, 255, 0), 2)
         cv2.drawContours(slice_tot, contours_gm, i, (0,255,0), 2)
+        # cv2.drawContours(slice_gm, contours_gm, i, (0, 255, 0), 2)
+        # cv2.drawContours(slice_tot, contours_gm, i, color, 2)
         # print cv2.contourArea(contours_gm[i])
 
 for i in range(len(contours_wm)):
     if cv2.contourArea(contours_wm[i]) > min_thresh:
-        cv2.drawContours(slice_tot, contours_wm, i, (255, 0, 0), 2)
+        if checkLobe(contours_wm[i], hierarchy_wm[0][i], slice_wm):
+            cv2.drawContours(slice_tot, contours_wm, i, (255,255,0), 2)
+        else:
+            cv2.drawContours(slice_tot, contours_wm, i, (255, 0, 0), 2)
 
-for i in range(len(contours_csf)):
-    if cv2.contourArea(contours_csf[i]) > min_thresh:
-        cv2.drawContours(slice_tot, contours_csf, i, (0, 0, 255), 2)
+# for i in range(len(contours_csf)):
+#     if cv2.contourArea(contours_csf[i]) > min_thresh:
+#         cv2.drawContours(slice_tot, contours_csf, i, (0, 0, 255), 2)
 
-cv2.imshow('prueba', slice_tot)
-# cv2.imshow('prueba', slice_gm)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+# cv2.imshow('prueba', slice_tot)
+# # cv2.imshow('prueba', slice_gm)
+# cv2.waitKey(0)
+# cv2.destroyAllWindows()
 
 
 #Show the image rotated
@@ -164,4 +198,5 @@ cv2.destroyAllWindows()
 
 fig, axes = plt.subplots(1, 1, figsize=[25, 7])
 axes.imshow(slice_tot, cmap="gray", origin="lower")
+# axes.imshow(slice_gm, origin="lower")
 plt.show()
