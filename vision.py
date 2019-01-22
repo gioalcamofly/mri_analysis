@@ -18,7 +18,7 @@ i3twm_data = i3twm.get_fdata()
 i3tcsf_data = i3tcsf.get_fdata()
 
 #Get slices
-cut = 180
+cut = 280
 
 slice_tot = i3t_data[:, cut, :].T
 slice_gm = i3tgm_data[:, cut, :].T
@@ -39,13 +39,10 @@ slice_gm = (slice_gm/256).astype(np.uint8)
 slice_wm = (slice_wm/256).astype(np.uint8)
 slice_csf = (slice_csf/256).astype(np.uint8)
 
-# fig, axes = plt.subplots(1, 1, figsize=[25, 7])
-# axes.imshow(slice_gm, cmap="gray", origin="lower")
-# plt.show()
-
-cv2.imshow('sin filtros', slice_gm)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+#
+# cv2.imshow('sin filtros', slice_gm)
+# cv2.waitKey(0)
+# cv2.destroyAllWindows()
 #Conver to color and overlay the three slices of the different fluids
 
 # slice_gm = cv2.cvtColor(slice_gm, cv2.COLOR_GRAY2BGR)
@@ -80,13 +77,14 @@ cv2.destroyAllWindows()
 
 #Closing
 #mask = np.ones((3,3), np.uint8)
-# mask = cv2.getStructuringElement(cv2.MORPH_CROSS, (5,5))
-# slice_gm = cv2.morphologyEx(slice_gm, cv2.MORPH_CLOSE, mask)
+# mask = cv2.getStructuringElement(cv2.MORPH_CROSS, (3,5))
+# slice_gm = cv2.morphologyEx(slice_gm, cv2.MORPH_ERODE, mask)
 
 #Dilation + erosion
-# slice_gm = cv2.dilate(slice_gm, mask, iterations = 1)
-# mask = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
 # slice_gm = cv2.erode(slice_gm, mask, iterations = 1)
+# slice_gm = cv2.dilate(slice_gm, mask, iterations =1)
+# mask = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
+
 
 
 #Transform images to binary images (Thresholding)
@@ -129,40 +127,72 @@ print slice_tot.shape
 
 min_thresh = 0
 
+def drawConvexDefects(cnt):
+    if cv2.isContourConvex(cnt):
+        return None
+
+    hull = cv2.convexHull(cnt, returnPoints= False)
+    defects = cv2.convexityDefects(cnt, hull)
+
+
+    for i in range(defects.shape[0]):
+        s, e, f, d = defects[i,0]
+        start = tuple(cnt[s][0])
+        end = tuple(cnt[e][0])
+        far = tuple(cnt[f][0])
+        cv2.line(slice_tot, start, end, [125, 255, 76], 2)
+        cv2.circle(slice_tot, far, 1, [255, 0, 0], -1)
+
 def checkLobe(cnt, hierarchy, slice):
     y, x = slice.shape
     leftmost = tuple(cnt[cnt[:,:,0].argmin()][0])
     rightmost = tuple(cnt[cnt[:, :, 0].argmax()][0])
-    topmost = tuple(cnt[cnt[:,:,1].argmin()][0])
+    topmost = tuple(cnt[cnt[:,:,1].argmax()][0])
+    bottommost = tuple(cnt[cnt[:,:,1].argmin()][0])
+
+    len_thresh = x/7
+    high_thresh = 10
 
 
-
-    #Temporal lobe shouldn't be longer than half size of the image (x axis)
-    if (rightmost[0] - leftmost[0]) > x/2:
+    if ((x/2 - len_thresh) < leftmost[0]) and (rightmost[0] < (x/2 + len_thresh)):
         return False
 
+    #Temporal lobe should be on the same half of the image
+    # if (rightmost[0] > x/2) and (leftmost[0] < x/2):
+    #     return False
+
     #Temporal lobe shouldn't be higher than half of the image (y axis)
-    if topmost[1] > y/2:
+    if topmost[1] > (y/2 - high_thresh):
         return False
 
     #Temporal lobe would be an external contour, so it shouldn't have parent or child
-    if hierarchy[2] != -1 and hierarchy[3] != -1:
+    if hierarchy[2] != -1 or hierarchy[3] != -1:
         return False
 
-
-    print hierarchy
-    print ("x = " + str(x))
-    print ("y = " + str(y))
-    print ("leftmost = " + str(leftmost))
-    print ("topmost = " + str(topmost))
-    print ("topmost (y) = " + str(topmost[1]))
+    print (y/2 - high_thresh)
+    print bottommost
+    # print ("borde inferior = " + str((x/2 - len_thresh)))
+    # print ("borde superior = " + str((x/2 + len_thresh)))
+    # print hierarchy[3]
+    # print ("x = " + str(x))
+    # print ("y = " + str(y))
+    # print ("leftmost = " + str(leftmost))
+    # print ("rightmost = " + str(rightmost))
+    # print ("topmost = " + str(topmost))
+    # print ("topmost (y) = " + str(topmost[1]))
     return True
 
 for i in range(len(contours_gm)):
     # color = (random.randint(50, 255), random.randint(50, 255), random.randint(50, 255))
     #cv2.drawContours(slice_tot, contours, i, color, cv2.FILLED)
     if cv2.contourArea(contours_gm[i]) > min_thresh:
-        cv2.drawContours(slice_tot, contours_gm, i, (0,255,0), 2)
+        if checkLobe(contours_gm[i], hierarchy_gm[0][i], slice_gm):
+            cv2.drawContours(slice_tot, contours_gm, i, (0,255,255), 1)
+            # cv2.drawContours(slice_tot, [cv2.convexHull(contours_gm[i])], -1, (123, 25, 200), 1)
+        else:
+            cv2.drawContours(slice_tot, contours_gm, i, (0, 255, 0), 1)
+            # cv2.drawContours(slice_tot, [cv2.convexHull(contours_gm[i])], -1, (123, 25, 200), 1)
+        drawConvexDefects(contours_gm[i])
         # cv2.drawContours(slice_gm, contours_gm, i, (0, 255, 0), 2)
         # cv2.drawContours(slice_tot, contours_gm, i, color, 2)
         # print cv2.contourArea(contours_gm[i])
@@ -170,13 +200,13 @@ for i in range(len(contours_gm)):
 for i in range(len(contours_wm)):
     if cv2.contourArea(contours_wm[i]) > min_thresh:
         if checkLobe(contours_wm[i], hierarchy_wm[0][i], slice_wm):
-            cv2.drawContours(slice_tot, contours_wm, i, (255,255,0), 2)
+            cv2.drawContours(slice_tot, contours_wm, i, (255,255,0), 1)
         else:
-            cv2.drawContours(slice_tot, contours_wm, i, (255, 0, 0), 2)
+            cv2.drawContours(slice_tot, contours_wm, i, (255, 0, 0), 1)
 
 # for i in range(len(contours_csf)):
 #     if cv2.contourArea(contours_csf[i]) > min_thresh:
-#         cv2.drawContours(slice_tot, contours_csf, i, (0, 0, 255), 2)
+#         cv2.drawContours(slice_tot, contours_csf, i, (0, 0, 255), 1)
 
 # cv2.imshow('prueba', slice_tot)
 # # cv2.imshow('prueba', slice_gm)
