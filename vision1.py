@@ -5,6 +5,24 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
+count_left = 0
+count_right = 0
+
+
+def getExtremes(cnt):
+
+    leftmost = tuple(cnt[cnt[:, :, 0].argmin()][0])
+    rightmost = tuple(cnt[cnt[:, :, 0].argmax()][0])
+    topmost = tuple(cnt[cnt[:, :, 1].argmax()][0])
+    bottommost = tuple(cnt[cnt[:, :, 1].argmin()][0])
+
+    return (leftmost, rightmost, topmost, bottommost)
+
+def show_img(img):
+    fig, axes = plt.subplots(1, 1, figsize=[25, 7])
+    axes.imshow(img, cmap="gray", origin="lower")
+    plt.show()
+
 def drawConvexDefects(cnt):
     if cv2.isContourConvex(cnt):
         return None
@@ -22,19 +40,16 @@ def drawConvexDefects(cnt):
         cv2.circle(slice_tot, far, 1, [255, 0, 0], -1)
 
 def checkLobe(cnt, hierarchy, slice):
+
+    global count_left
+    global count_right
     y, x = slice.shape
-    leftmost = tuple(cnt[cnt[:,:,0].argmin()][0])
-    rightmost = tuple(cnt[cnt[:, :, 0].argmax()][0])
-    topmost = tuple(cnt[cnt[:,:,1].argmax()][0])
-    bottommost = tuple(cnt[cnt[:,:,1].argmin()][0])
+
+    leftmost, rightmost, topmost, bottommost = getExtremes(cnt)
 
     len_thresh = x/7
     high_thresh = 10
 
-
-    #Temporal lobe should be at left or right of the image (not in the middle)
-    if ((x/2 - len_thresh) < leftmost[0]) and (rightmost[0] < (x/2 + len_thresh)):
-        return False
 
     #Temporal lobe shouldn't be higher than half of the image (y axis)
     if topmost[1] > (y/2 - high_thresh):
@@ -43,6 +58,14 @@ def checkLobe(cnt, hierarchy, slice):
     #Temporal lobe would be an external contour, so it shouldn't have parent or child
     if hierarchy[2] != -1 or hierarchy[3] != -1:
         return False
+
+    # Temporal lobe should be at left or right of the image (not in the middle)
+    if ((x / 2 - len_thresh) < leftmost[0]) and (rightmost[0] < (x / 2 + len_thresh)):
+        return False
+    elif ((x / 2 - len_thresh) > leftmost[0]):
+        count_left = count_left + 1
+    else:   
+        count_right = count_right + 1
 
     return True
 
@@ -82,68 +105,72 @@ for i in range (i3t_data.shape[1] - 1, 0, -1):
 # slice_wm = i3twm_data[:, cut, :].T
 # slice_csf = i3tcsf_data[:, cut, :].T
 
-slice_tot = slice_tl[0][0]
-slice_gm = slice_tl[0][1]
-slice_wm = slice_tl[0][2]
-slice_csf = slice_tl[0][3]
+for i in range(len(slice_tl)):
+    slice_tot = slice_tl[i][0]
+    slice_gm = slice_tl[i][1]
+    slice_wm = slice_tl[i][2]
+    slice_csf = slice_tl[i][3]
 
 
 
-#Convert to datatype understandable by OpenCV
+    #Convert to datatype understandable by OpenCV
 
-slice_tot = (slice_tot/256).astype(np.uint8)
+    slice_tot = (slice_tot/256).astype(np.uint8)
 
-slice_tot = cv2.normalize(slice_tot, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
-slice_gm = cv2.normalize(slice_gm, dst=None, alpha=0, beta=65535, norm_type=cv2.NORM_MINMAX)
-slice_wm = cv2.normalize(slice_wm, dst=None, alpha=0, beta=65535, norm_type=cv2.NORM_MINMAX)
-slice_csf = cv2.normalize(slice_csf, dst=None, alpha=0, beta=65535, norm_type=cv2.NORM_MINMAX)
+    slice_tot = cv2.normalize(slice_tot, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+    slice_gm = cv2.normalize(slice_gm, dst=None, alpha=0, beta=65535, norm_type=cv2.NORM_MINMAX)
+    slice_wm = cv2.normalize(slice_wm, dst=None, alpha=0, beta=65535, norm_type=cv2.NORM_MINMAX)
+    slice_csf = cv2.normalize(slice_csf, dst=None, alpha=0, beta=65535, norm_type=cv2.NORM_MINMAX)
 
-slice_gm = (slice_gm/256).astype(np.uint8)
-slice_wm = (slice_wm/256).astype(np.uint8)
-slice_csf = (slice_csf/256).astype(np.uint8)
+    slice_gm = (slice_gm/256).astype(np.uint8)
+    slice_wm = (slice_wm/256).astype(np.uint8)
+    slice_csf = (slice_csf/256).astype(np.uint8)
 
+    test = slice_tl[i][1]
+    show_img(test)
 
+    #Transform images to binary images (Thresholding)
 
-#Transform images to binary images (Thresholding)
+    ret, thresh_gm = cv2.threshold(slice_gm, 10, 255, cv2.THRESH_OTSU)
+    ret, thresh_wm = cv2.threshold(slice_wm, 127, 255, cv2.THRESH_OTSU)
+    ret, thresh_csf = cv2.threshold(slice_csf, 127, 255, cv2.THRESH_OTSU)
 
-ret, thresh_gm = cv2.threshold(slice_gm, 127, 255, cv2.THRESH_OTSU)
-ret, thresh_wm = cv2.threshold(slice_wm, 127, 255, cv2.THRESH_OTSU)
-ret, thresh_csf = cv2.threshold(slice_csf, 127, 255, cv2.THRESH_OTSU)
-
-slice_gm, contours_gm, hierarchy_gm = cv2.findContours(thresh_gm, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-slice_wm, contours_wm, hierarchy_wm = cv2.findContours(thresh_wm, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-image_csf, contours_csf, hierarchy_csf = cv2.findContours(thresh_csf, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-
-slice_tot = cv2.cvtColor(slice_tot, cv2.COLOR_GRAY2BGR)
-
-min_thresh = 0
+    thresh_gm = cv2.medianBlur(thresh_gm, 3)
+    show_img(thresh_gm)
+    slice_gm, contours_gm, hierarchy_gm = cv2.findContours(thresh_gm, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    slice_wm, contours_wm, hierarchy_wm = cv2.findContours(thresh_wm, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    image_csf, contours_csf, hierarchy_csf = cv2.findContours(thresh_csf, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
 
+    slice_tot = cv2.cvtColor(slice_tot, cv2.COLOR_GRAY2BGR)
 
-for i in range(len(contours_gm)):
-    if cv2.contourArea(contours_gm[i]) > min_thresh:
-        if checkLobe(contours_gm[i], hierarchy_gm[0][i], slice_gm):
-            cv2.drawContours(slice_tot, contours_gm, i, (0,255,255), 1)
-        else:
-            cv2.drawContours(slice_tot, contours_gm, i, (0, 255, 0), 1)
-        # drawConvexDefects(contours_gm[i])
-
-for i in range(len(contours_wm)):
-    if cv2.contourArea(contours_wm[i]) > min_thresh:
-        if checkLobe(contours_wm[i], hierarchy_wm[0][i], slice_wm):
-            cv2.drawContours(slice_tot, contours_wm, i, (255,255,0), 1)
-        else:
-            cv2.drawContours(slice_tot, contours_wm, i, (255, 0, 0), 1)
-
-# for i in range(len(contours_csf)):
-#     if cv2.contourArea(contours_csf[i]) > min_thresh:
-#         cv2.drawContours(slice_tot, contours_csf, i, (0, 0, 255), 1)
+    min_thresh = 0
 
 
-#Show the image with Matplotlib
 
-fig, axes = plt.subplots(1, 1, figsize=[25, 7])
-axes.imshow(slice_tot, cmap="gray", origin="lower")
-# axes.imshow(slice_gm, origin="lower")
-plt.show()
+    for i in range(len(contours_gm)):
+        if cv2.contourArea(contours_gm[i]) > min_thresh:
+            if checkLobe(contours_gm[i], hierarchy_gm[0][i], slice_gm):
+                cv2.drawContours(slice_tot, contours_gm, i, (0,255,255), 1)
+            else:
+                cv2.drawContours(slice_tot, contours_gm, i, (0, 255, 0), 1)
+            # drawConvexDefects(contours_gm[i])
+
+    for i in range(len(contours_wm)):
+        if cv2.contourArea(contours_wm[i]) > min_thresh:
+            if checkLobe(contours_wm[i], hierarchy_wm[0][i], slice_wm):
+                cv2.drawContours(slice_tot, contours_wm, i, (255,255,0), 1)
+            else:
+                cv2.drawContours(slice_tot, contours_wm, i, (255, 0, 0), 1)
+
+    # for i in range(len(contours_csf)):
+    #     if cv2.contourArea(contours_csf[i]) > min_thresh:
+    #         cv2.drawContours(slice_tot, contours_csf, i, (0, 0, 255), 1)
+
+
+    #Show the image with Matplotlib
+
+    fig, axes = plt.subplots(1, 1, figsize=[25, 7])
+    axes.imshow(slice_tot, cmap="gray", origin="lower")
+    # axes.imshow(slice_gm, origin="lower")
+    plt.show()
