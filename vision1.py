@@ -5,8 +5,27 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-count_left = 0
-count_right = 0
+count_left = ()
+count_right = ()
+
+
+def drawLine(slice, cnts):
+
+
+    for i in range(1, len(cnts)):
+        cnt = cnts[i]
+        topmost = tuple(cnt[cnt[:, :, 1].argmax()][0])
+        slice = cv2.line(slice, (topmost[0] - 20, topmost[1]), (topmost[0] + 50, topmost[1]), (0, 0, 0), 1)
+
+    return slice
+def getArea(cnts):
+    sum = 0
+
+    for i in range(1, len(cnts)):
+        sum = sum + cv2.contourArea(cnts[i])
+
+    return sum
+
 
 
 def getExtremes(cnt):
@@ -62,10 +81,10 @@ def checkLobe(cnt, hierarchy, slice):
     # Temporal lobe should be at left or right of the image (not in the middle)
     if ((x / 2 - len_thresh) < leftmost[0]) and (rightmost[0] < (x / 2 + len_thresh)):
         return False
-    elif ((x / 2 - len_thresh) > leftmost[0]):
-        count_left = count_left + 1
-    else:   
-        count_right = count_right + 1
+    elif ((x / 2 - len_thresh) >= leftmost[0]):
+        count_left.append(cnt)
+    elif (rightmost[0] > (x / 2 + len_thresh)):
+        count_right.append(cnt)
 
     return True
 
@@ -106,6 +125,10 @@ for i in range (i3t_data.shape[1] - 1, 0, -1):
 # slice_csf = i3tcsf_data[:, cut, :].T
 
 for i in range(len(slice_tl)):
+
+    count_right = [()]
+    count_left = [()]
+
     slice_tot = slice_tl[i][0]
     slice_gm = slice_tl[i][1]
     slice_wm = slice_tl[i][2]
@@ -126,8 +149,8 @@ for i in range(len(slice_tl)):
     slice_wm = (slice_wm/256).astype(np.uint8)
     slice_csf = (slice_csf/256).astype(np.uint8)
 
-    test = slice_tl[i][1]
-    show_img(test)
+    # test = slice_tl[i][1]
+    # show_img(test)
 
     #Transform images to binary images (Thresholding)
 
@@ -135,8 +158,8 @@ for i in range(len(slice_tl)):
     ret, thresh_wm = cv2.threshold(slice_wm, 127, 255, cv2.THRESH_OTSU)
     ret, thresh_csf = cv2.threshold(slice_csf, 127, 255, cv2.THRESH_OTSU)
 
-    thresh_gm = cv2.medianBlur(thresh_gm, 3)
-    show_img(thresh_gm)
+    # thresh_gm = cv2.medianBlur(thresh_gm, 3)
+    # show_img(thresh_gm)
     slice_gm, contours_gm, hierarchy_gm = cv2.findContours(thresh_gm, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     slice_wm, contours_wm, hierarchy_wm = cv2.findContours(thresh_wm, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     image_csf, contours_csf, hierarchy_csf = cv2.findContours(thresh_csf, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -145,7 +168,7 @@ for i in range(len(slice_tl)):
     slice_tot = cv2.cvtColor(slice_tot, cv2.COLOR_GRAY2BGR)
 
     min_thresh = 0
-
+    area_difference = 20
 
 
     for i in range(len(contours_gm)):
@@ -155,6 +178,14 @@ for i in range(len(slice_tl)):
             else:
                 cv2.drawContours(slice_tot, contours_gm, i, (0, 255, 0), 1)
             # drawConvexDefects(contours_gm[i])
+
+    slice_tot = drawLine(slice_tot, count_left)
+    # if len(count_left) > 1:
+    #     left_area = getArea(count_left)
+    #     print ("left area = " + str(left_area))
+    # if len(count_right) > 1:
+    #     right_area = getArea(count_right)
+    #     print ("right area = " + str(right_area))
 
     for i in range(len(contours_wm)):
         if cv2.contourArea(contours_wm[i]) > min_thresh:
@@ -169,6 +200,9 @@ for i in range(len(slice_tl)):
 
 
     #Show the image with Matplotlib
+
+    print len(count_left)
+    print len(count_right)
 
     fig, axes = plt.subplots(1, 1, figsize=[25, 7])
     axes.imshow(slice_tot, cmap="gray", origin="lower")
