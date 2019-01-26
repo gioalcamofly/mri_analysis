@@ -3,30 +3,53 @@ import cv2
 import nibabel as nib
 import numpy as np
 import matplotlib.pyplot as plt
-
+import copy
 
 count_left = ()
 count_right = ()
+prev_area = 0
+prev_top = 0
 
 
-def drawLine(slice, cnts):
+
+def getTopmost(cnts):
+
+    topmosts = [()]
+    topIndex = 0
 
 
-    for i in range(1, len(cnts)):
+    for i in range (1, len(cnts)):
         cnt = cnts[i]
-        topmost = tuple(cnt[cnt[:, :, 1].argmax()][0])
-        slice = cv2.line(slice, (topmost[0] - 20, topmost[1]), (topmost[0] + 50, topmost[1]), (0, 0, 0), 1)
+        topmosts.append(tuple(cnt[cnt[:, :, 1].argmax()][0]))
+
+    for i in range (1, len(topmosts)):
+        if topmosts[topIndex] < topmosts[i]:
+            topIndex = i
+
+    return cnts[topIndex]
+
+def drawLine(slice, cnt, mult):
+
+    global prev_top
+
+    slope = 6
+    length = 20
+    topmost = tuple(cnt[cnt[:, :, 1].argmax()][0])
+
+    if mult == 1:
+        prev_top = cnt
+    slice = cv2.line(slice, (topmost[0] - length, topmost[1] + slope * mult), (topmost[0] + length, topmost[1] - slope * mult), (0, 0, 0), 3)
 
     return slice
-def getArea(cnts):
+
+
+def getTotalArea(cnts):
     sum = 0
 
     for i in range(1, len(cnts)):
         sum = sum + cv2.contourArea(cnts[i])
 
     return sum
-
-
 
 def getExtremes(cnt):
 
@@ -165,24 +188,54 @@ for i in range(len(slice_tl)):
     image_csf, contours_csf, hierarchy_csf = cv2.findContours(thresh_csf, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
 
+
+    # slice_tot = cv2.cvtColor(slice_tot, cv2.COLOR_GRAY2BGR)
     slice_tot = cv2.cvtColor(slice_tot, cv2.COLOR_GRAY2BGR)
-
+    # slice_tmp = slice_tot[:, :, :]
+    slice_tmp = copy.deepcopy(slice_tot)
     min_thresh = 0
-    area_difference = 20
-
 
     for i in range(len(contours_gm)):
         if cv2.contourArea(contours_gm[i]) > min_thresh:
             if checkLobe(contours_gm[i], hierarchy_gm[0][i], slice_gm):
-                cv2.drawContours(slice_tot, contours_gm, i, (0,255,255), 1)
+                cv2.drawContours(slice_tmp, contours_gm, i, (0,255,255), 1)
             else:
-                cv2.drawContours(slice_tot, contours_gm, i, (0, 255, 0), 1)
+                cv2.drawContours(slice_tmp, contours_gm, i, (0, 255, 0), 1)
             # drawConvexDefects(contours_gm[i])
 
-    slice_tot = drawLine(slice_tot, count_left)
+    if len(count_left) > 1:
+        slice_tmp = drawLine(slice_tmp, getTopmost(count_left), 1)
+
+    if len(count_right) > 1:
+        slice_tmp = drawLine(slice_tmp, getTopmost(count_right), -1)
+
+    print ("Prev area = " + str(prev_area))
+    print ("Total area = " + str(getTotalArea(count_left)))
+    print ("Total - prev = " + str(getTotalArea(count_left) - prev_area))
+    if (getTotalArea(count_left) - prev_area) < (-50):
+        #TL hasn't been correctly detected
+        print 'entro'
+        slice_gm = drawLine(slice_gm, prev_top, 1)
+        ret, thresh_gm = cv2.threshold(slice_gm, 10, 255, cv2.THRESH_OTSU)
+        slice_gm, contours_gm, hierarchy_gm = cv2.findContours(thresh_gm, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        slice_tmp = copy.deepcopy(slice_tot)
+        for i in range(len(contours_gm)):
+            if checkLobe(contours_gm[i], hierarchy_gm[0][i], slice_gm):
+                cv2.drawContours(slice_tmp, contours_gm, i, (0, 255, 255), 1)
+            else:
+                cv2.drawContours(slice_tmp, contours_gm, i, (0, 255, 0), 1)
+
+        if len(count_left) > 1:
+            slice_tmp = drawLine(slice_tmp, getTopmost(count_left), 1)
+
+        if len(count_right) > 1:
+            slice_tmp = drawLine(slice_tmp, getTopmost(count_right), -1)
+
+    prev_area = getTotalArea(count_left)
+
+    # slice_tot = drawLine(slice_tot, count_right, -1)
     # if len(count_left) > 1:
     #     left_area = getArea(count_left)
-    #     print ("left area = " + str(left_area))
     # if len(count_right) > 1:
     #     right_area = getArea(count_right)
     #     print ("right area = " + str(right_area))
@@ -190,9 +243,9 @@ for i in range(len(slice_tl)):
     for i in range(len(contours_wm)):
         if cv2.contourArea(contours_wm[i]) > min_thresh:
             if checkLobe(contours_wm[i], hierarchy_wm[0][i], slice_wm):
-                cv2.drawContours(slice_tot, contours_wm, i, (255,255,0), 1)
+                cv2.drawContours(slice_tmp, contours_wm, i, (255,255,0), 1)
             else:
-                cv2.drawContours(slice_tot, contours_wm, i, (255, 0, 0), 1)
+                cv2.drawContours(slice_tmp, contours_wm, i, (255, 0, 0), 1)
 
     # for i in range(len(contours_csf)):
     #     if cv2.contourArea(contours_csf[i]) > min_thresh:
@@ -203,6 +256,8 @@ for i in range(len(slice_tl)):
 
     print len(count_left)
     print len(count_right)
+
+    slice_tot = slice_tmp
 
     fig, axes = plt.subplots(1, 1, figsize=[25, 7])
     axes.imshow(slice_tot, cmap="gray", origin="lower")
