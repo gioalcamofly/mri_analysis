@@ -32,8 +32,8 @@ def drawLine(slice, cnt, mult):
 
     global prev_top
 
-    slope = 6
-    length = 20
+    slope = 8
+    length = 25
     topmost = tuple(cnt[cnt[:, :, 1].argmax()][0])
 
     if mult == 1:
@@ -203,33 +203,36 @@ for i in range(len(slice_tl)):
                 cv2.drawContours(slice_tmp, contours_gm, i, (0, 255, 0), 1)
             # drawConvexDefects(contours_gm[i])
 
-    if len(count_left) > 1:
-        slice_tmp = drawLine(slice_tmp, getTopmost(count_left), 1)
+    # if len(count_left) > 1:
+    #     slice_tmp = drawLine(slice_tmp, getTopmost(count_left), 1)
+    #
+    # if len(count_right) > 1:
+    #     slice_tmp = drawLine(slice_tmp, getTopmost(count_right), -1)
 
-    if len(count_right) > 1:
-        slice_tmp = drawLine(slice_tmp, getTopmost(count_right), -1)
-
-    print ("Prev area = " + str(prev_area))
-    print ("Total area = " + str(getTotalArea(count_left)))
-    print ("Total - prev = " + str(getTotalArea(count_left) - prev_area))
+    # print ("Prev area = " + str(prev_area))
+    # print ("Total area = " + str(getTotalArea(count_left)))
+    # print ("Total - prev = " + str(getTotalArea(count_left) - prev_area))
     if (getTotalArea(count_left) - prev_area) < (-50):
         #TL hasn't been correctly detected
-        print 'entro'
+        show_img(slice_gm)
         slice_gm = drawLine(slice_gm, prev_top, 1)
+        show_img(slice_gm)
         ret, thresh_gm = cv2.threshold(slice_gm, 10, 255, cv2.THRESH_OTSU)
         slice_gm, contours_gm, hierarchy_gm = cv2.findContours(thresh_gm, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
         slice_tmp = copy.deepcopy(slice_tot)
+        count_left = [()]
         for i in range(len(contours_gm)):
             if checkLobe(contours_gm[i], hierarchy_gm[0][i], slice_gm):
                 cv2.drawContours(slice_tmp, contours_gm, i, (0, 255, 255), 1)
             else:
                 cv2.drawContours(slice_tmp, contours_gm, i, (0, 255, 0), 1)
 
-        if len(count_left) > 1:
-            slice_tmp = drawLine(slice_tmp, getTopmost(count_left), 1)
+    if len(count_left) > 1:
+        slice_tmp = drawLine(slice_tmp, getTopmost(count_left), 1)
 
-        if len(count_right) > 1:
-            slice_tmp = drawLine(slice_tmp, getTopmost(count_right), -1)
+    if len(count_right) > 1:
+        slice_tmp = drawLine(slice_tmp, getTopmost(count_right), -1)
 
     prev_area = getTotalArea(count_left)
 
@@ -254,8 +257,8 @@ for i in range(len(slice_tl)):
 
     #Show the image with Matplotlib
 
-    print len(count_left)
-    print len(count_right)
+    print ("Count left = " + str(len(count_left)))
+    print ("Count right = " + str(len(count_right)))
 
     slice_tot = slice_tmp
 
