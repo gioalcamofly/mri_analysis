@@ -9,6 +9,7 @@ count_left = []
 count_right = []
 prev_area = 0
 prev_top = 0
+prev_topmost = 0
 top = 0
 
 
@@ -38,9 +39,9 @@ def getTopmost(cnts):
 
     return cnts[topIndex]
 
-def getCentroid(cnts):
+def getCentroid(cnt):
 
-    cnt = getBiggerArea(cnts)
+    # cnt = getBiggerArea(cnts)
 
     M = cv2.moments(cnt)
 
@@ -54,34 +55,10 @@ def getCentroid(cnts):
 
     return (x, y)
 
-#
-# def drawLine(slice, cnt, mult, slope):
-#
-#     global prev_top
-#     global top
-#
-#     # slope = 6
-#     length = 50
-#     topmost = tuple(cnt[cnt[:, :, 1].argmax()][0])
-#
-#     if mult == 1:
-#         prev_top = cnt
-#         top = topmost[1]
-#
-#     if mult == 1:
-#         slice = cv2.line(slice, (topmost[0], topmost[1]), (topmost[0] + length, topmost[1] - slope * mult), (0, 0, 0), 2)
-#     else:
-#         slice = cv2.line(slice, (topmost[0] - length, topmost[1] + slope * mult), (topmost[0], topmost[1]), (0, 0, 0), 2)
-#
-#     return slice
-
-def drawLine(slice, point, mult, slope):
+def drawLine(slice, point, mult, slope, length, up):
 
     global prev_top
     global top
-
-    length = 50
-    up = 8
 
     if mult == 1:
         prev_top = point
@@ -130,6 +107,16 @@ def drawConvexDefects(cnt):
         cv2.line(slice_tot, start, end, [125, 255, 76], 2)
         cv2.circle(slice_tot, far, 1, [255, 0, 0], -1)
 
+def isTooHigh(cnt, y):
+
+    high_thresh = -10
+    centroid = getCentroid(cnt)
+
+    if centroid[1] > y + high_thresh:
+        return True
+    else:
+        return False
+
 def checkLobe(cnt, hierarchy, slice):
 
     global count_left
@@ -143,12 +130,13 @@ def checkLobe(cnt, hierarchy, slice):
 
 
     #Temporal lobe shouldn't be higher than half of the image (y axis)
-    if topmost[1] > (y/2 + high_thresh):
+    # if topmost[1] > (y/2 + high_thresh):
+    #     return False
+    if isTooHigh(cnt, y/2):
         return False
 
     #Temporal lobe would be an external contour, so it shouldn't have parent or child
-    # if hierarchy[2] != -1 or hierarchy[3] != -1:
-    #     print hierarchy
+    # if hierarchy[3] != -1:
     #     return False
 
     # Temporal lobe should be at left or right of the image (not in the middle)
@@ -189,15 +177,6 @@ for i in range (i3t_data.shape[1] - 1, 0, -1):
     else:
         slice_norm.append([i3t_data[:, i, :].T, i3tgm_data[:, i, :].T, i3twm_data[:, i, :].T, i3tcsf_data[:, i, :].T])
 
-
-#Get slices
-# cut = 294
-
-# slice_tot = i3t_data[:, cut, :].T
-# slice_gm = i3tgm_data[:, cut, :].T
-# slice_wm = i3twm_data[:, cut, :].T
-# slice_csf = i3tcsf_data[:, cut, :].T
-
 for i in range(12, len(slice_tl)):
 
     count_right = []
@@ -223,26 +202,19 @@ for i in range(12, len(slice_tl)):
     slice_wm = (slice_wm/256).astype(np.uint8)
     slice_csf = (slice_csf/256).astype(np.uint8)
 
-    # test = slice_tl[i][1]
-    # show_img(test)
-
     #Transform images to binary images (Thresholding)
 
     ret, thresh_gm = cv2.threshold(slice_gm, 10, 255, cv2.THRESH_OTSU)
     ret, thresh_wm = cv2.threshold(slice_wm, 127, 255, cv2.THRESH_OTSU)
     ret, thresh_csf = cv2.threshold(slice_csf, 127, 255, cv2.THRESH_OTSU)
 
-    # thresh_gm = cv2.medianBlur(thresh_gm, 3)
-    # show_img(thresh_gm)
     slice_gm, contours_gm, hierarchy_gm = cv2.findContours(thresh_gm, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     slice_wm, contours_wm, hierarchy_wm = cv2.findContours(thresh_wm, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     image_csf, contours_csf, hierarchy_csf = cv2.findContours(thresh_csf, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
 
-
-    # slice_tot = cv2.cvtColor(slice_tot, cv2.COLOR_GRAY2BGR)
     slice_tot = cv2.cvtColor(slice_tot, cv2.COLOR_GRAY2BGR)
-    # slice_tmp = slice_tot[:, :, :]
+
     slice_tmp = copy.deepcopy(slice_tot)
     min_thresh = 0
 
@@ -252,25 +224,19 @@ for i in range(12, len(slice_tl)):
                 cv2.drawContours(slice_tmp, contours_gm, i, (0,255,255), 1)
             else:
                 cv2.drawContours(slice_tmp, contours_gm, i, (0, 255, 0), 1)
-            # drawConvexDefects(contours_gm[i])
-
-    # if len(count_left) > 1:
-    #     slice_tmp = drawLine(slice_tmp, getTopmost(count_left), 1)
-    #
-    # if len(count_right) > 1:
-    #     slice_tmp = drawLine(slice_tmp, getTopmost(count_right), -1)
-
-    # print ("Prev area = " + str(prev_area))
-    # print ("Total area = " + str(getTotalArea(count_left)))
-    # print ("Total - prev = " + str(getTotalArea(count_left) - prev_area))
     slope = 5
-    while (getTotalArea(count_left) - prev_area) < (-50):
+    while (getTotalArea(count_left) - prev_area) < (-prev_area/5):
+        print ("Area anterior = " + str(prev_area))
+        print ("Area total = " + str(getTotalArea(count_left)))
         #TL hasn't been correctly detected
-        print 'entro'
-        show_img(slice_gm)
+        # show_img(slice_gm)
         slice_gm_tmp = copy.deepcopy(slice_gm)
-        slice_gm_tmp = drawLine(slice_gm_tmp, prev_top, 1, slope)
-        slope = slope + 1
+        if slope < 20:
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_top, 1, slope, 50, 8)
+            slope = slope + 1
+        else:
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_topmost, 1, 0, 25, 0)
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_topmost, 1, 0, -25, 0)
         show_img(slice_gm_tmp)
         ret, thresh_gm = cv2.threshold(slice_gm_tmp, 10, 255, cv2.THRESH_OTSU)
         slice_gm_tmp, contours_gm, hierarchy_gm = cv2.findContours(thresh_gm, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -283,20 +249,16 @@ for i in range(12, len(slice_tl)):
             else:
                 cv2.drawContours(slice_tmp, contours_gm, i, (0, 255, 0), 1)
 
+        # show_img(slice_tmp)
+
     if len(count_left) > 0:
-        # slice_tmp = drawLine(slice_tmp, getTopmost(count_left), 1, 6)
-        slice_tmp = drawLine(slice_tmp, getCentroid(count_left), 1, 6)
+        slice_tmp = drawLine(slice_tmp, getCentroid(getBiggerArea(count_left)), 1, 6, 50, 8)
+        tmp = getTopmost(count_left)
+        prev_topmost = tuple(tmp[tmp[:, :, 1].argmax()][0])
     if len(count_right) > 0:
-        # slice_tmp = drawLine(slice_tmp, getTopmost(count_right), -1, 6)
-        slice_tmp = drawLine(slice_tmp, getCentroid(count_right), -1, 6)
+        slice_tmp = drawLine(slice_tmp, getCentroid(getBiggerArea(count_right)), -1, 6, 50, 8)
     prev_area = getTotalArea(count_left)
 
-    # slice_tot = drawLine(slice_tot, count_right, -1)
-    # if len(count_left) > 1:
-    #     left_area = getArea(count_left)
-    # if len(count_right) > 1:
-    #     right_area = getArea(count_right)
-    #     print ("right area = " + str(right_area))
 
     for i in range(len(contours_wm)):
         if cv2.contourArea(contours_wm[i]) > min_thresh:
@@ -319,5 +281,4 @@ for i in range(12, len(slice_tl)):
 
     fig, axes = plt.subplots(1, 1, figsize=[25, 7])
     axes.imshow(slice_tot, cmap="gray", origin="lower")
-    # axes.imshow(slice_gm, origin="lower")
     plt.show()
