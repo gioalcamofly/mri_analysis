@@ -55,6 +55,14 @@ def getTotalArea(cnts):
 
     return sum
 
+def getRightmost(cnt):
+
+    return tuple(cnt[cnt[:, :, 0].argmin()][0])
+
+def getLeftmost(cnt):
+
+    return tuple(cnt[cnt[:, :, 0].argmax()][0])
+
 def getExtremes(cnt):
 
     leftmost = tuple(cnt[cnt[:, :, 0].argmin()][0])
@@ -64,31 +72,17 @@ def getExtremes(cnt):
 
     return (leftmost, rightmost, topmost, bottommost)
 
-def show_img(img):
+def show_img(img, i):
     fig, axes = plt.subplots(1, 1, figsize=[25, 7])
     axes.imshow(img, cmap="gray", origin="lower")
-    plt.show()
+    # plt.show()
+    fig.savefig('/home/giovanni/Documentos/UNED/vision_artificial/memoria_0/out/img' + str(i) + '.png')
+    plt.close(fig)
 
-def drawConvexDefects(cnt):
-
-    if cv2.isContourConvex(cnt):
-        return None
-
-    hull = cv2.convexHull(cnt, returnPoints= False)
-    defects = cv2.convexityDefects(cnt, hull)
-
-
-    for i in range(defects.shape[0]):
-        s, e, f, d = defects[i,0]
-        start = tuple(cnt[s][0])
-        end = tuple(cnt[e][0])
-        far = tuple(cnt[f][0])
-        cv2.line(slice_tot, start, end, [125, 255, 76], 2)
-        cv2.circle(slice_tot, far, 1, [255, 0, 0], -1)
 
 def isTooHigh(cnt, y):
 
-    high_thresh = -15
+    high_thresh = -20
     centroid = getCentroid(cnt)
 
     if centroid[1] > y + high_thresh:

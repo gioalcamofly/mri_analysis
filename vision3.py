@@ -10,13 +10,53 @@ import math
 count_left = []
 count_right = []
 gm_no_tl = []
-prev_area = 0
+prev_area_left = 0
+prev_area_right = 0
+
 prev_convex_area = []
-prev_top = 0
-prev_topmost = 0
+prev_max = []
+
+prev_top_left = 0
+prev_top_right = 0
+
+prev_topmost_left = 0
+prev_topmost_right = 0
+
 started = False
 last_try = False
-detecting = True
+detecting = False
+
+def drawConvexDefects(slice, cnt):
+
+    if cv2.isContourConvex(cnt):
+        return None
+
+    hull = cv2.convexHull(cnt, returnPoints= False)
+    defects = cv2.convexityDefects(cnt, hull)
+
+
+    for i in range(defects.shape[0]):
+        s, e, f, d = defects[i,0]
+        start = tuple(cnt[s][0])
+        end = tuple(cnt[e][0])
+        far = tuple(cnt[f][0])
+        cv2.line(slice, start, end, [0, 0, 0], 2)
+        # cv2.circle(slice, far, 1, [255, 0, 0], -1)
+
+    return slice
+
+def drawEllipse(slice, cnt):
+
+    centroid = vis.getCentroid(cnt)
+    leftmost, rightmost, topmost, bottommost = vis.getExtremes(cnt)
+
+
+    # ellipse = cv2.fitEllipse(cnt)
+    # slice = cv2.ellipse(slice, ellipse, (123, 134, 40), 2)
+
+    slice = cv2.ellipse(slice, centroid, (rightmost[0]  + 10 - centroid[0], topmost[1] - centroid[1]), 0, 0, 360, (0, 0, 0), 2)
+
+    return slice
 
 def drawFrame(contours, hierarchy, slice_ori, slice_dest, color, c_type):
 
@@ -41,15 +81,14 @@ def processFrame(slice):
     return slice, contours, hierarchy
 
 
+def drawLine2(slice, origin, dest):
+
+    slice = cv2.line(slice, (origin[0], origin[1] + 10), dest, (0,0,0), 2)
+
+    return slice
+
 
 def drawLine(slice, point, mult, slope, length, up):
-
-    global prev_top
-    global top
-
-    if mult == 1:
-        # prev_top = point
-        top = point[1]
 
     slice = cv2.line(slice, (point[0], point[1] + up), (point[0] + length, point[1] + up - slope * mult), (0, 0, 0), 2)
 
@@ -74,14 +113,12 @@ def checkLobe(cnt, hierarchy, slice):
     if started:
         dist = cv2.pointPolygonTest(prev_convex_area, vis.getCentroid(cnt), False)
         if dist >= 0:
-            # print ("Area = " + str(cv2.contourArea(cnt)) + " regla = 1")
             return False
 
     #Temporal lobe shouldn't be higher than half of the image (y axis)
     # if topmost[1] > (y/2 + high_thresh):
     #     return False
     if vis.isTooHigh(cnt, y/2):
-        # print ("Area = " + str(cv2.contourArea(cnt)) + " regla = 2")
         return False
 
     #Temporal lobe would be an external contour, so it shouldn't have parent or child
@@ -90,7 +127,6 @@ def checkLobe(cnt, hierarchy, slice):
 
     # Temporal lobe should be at left or right of the image (not in the middle)
     if ((x / 2 - len_thresh) < leftmost[0]) and (rightmost[0] < (x / 2 + len_thresh)):
-        # print ("Area = " + str(cv2.contourArea(cnt)) + " regla = 3")
         return False
     elif ((x / 2 - len_thresh) >= leftmost[0]):
         count_left.append(cnt)
@@ -99,30 +135,62 @@ def checkLobe(cnt, hierarchy, slice):
 
     return True
 
-def errorLoop(slope, up, length):
+def errorLoop(slice, slice_thresh, slope, up, length, left_or_right):
 
     global count_left
-    global prev_area
-    global slice_tot
-    global last_try
+    global count_right
+
+    global prev_area_left
+    global prev_area_right
+
+    global prev_top_left
+    global prev_top_right
+
+    global prev_topmost_left
+    global prev_topmost_right
+
+    global prev_max
+
     global slice_tmp
+    global slice_tot
+    global slice_gm
+
+    global last_try
+
     global gm_no_tl
 
-    difference = (vis.getTotalArea(count_left) - prev_area)
+    count = []
+    prev_area = 0
+    prev_top = 0
+    prev_topmost = 0
 
-    print ("Difference = " + str(difference))
-    # slice_tmp = copy.deepcopy(slice_tot)
+    slice_gm_tmp = copy.deepcopy(slice_thresh)
 
-    while (difference < (-prev_area/3) or (vis.getTotalArea(count_left) < 1000 and prev_area > 1000)):
+    # 1 --> Left side | -1 --> Right side
+    if left_or_right == 1:
+        count = count_left
+        prev_area = prev_area_left
+        prev_top = prev_top_left
+        prev_topmost = prev_topmost_left
+    else:
+        count = count_right
+        prev_area = prev_area_right
+        prev_top = prev_top_right
+        prev_topmost = prev_topmost_right
+
+    difference = (vis.getTotalArea(count) - prev_area)
+    print ("difference = " + str(difference))
+    while (difference < (-prev_area/2) or (vis.getTotalArea(count) < 1000 and prev_area > 1000)):
 
         if last_try:
-            return []
+            return [], []
 
-        slice_gm_tmp = copy.deepcopy(slice_gm)
+
+        slice_gm_tmp = copy.deepcopy(slice_thresh)
 
         if slope < 20:
-            slice_gm_tmp = drawLine(slice_gm_tmp, prev_top, 1, slope, 50, 8)
-            slice_gm_tmp = drawLine(slice_gm_tmp, prev_top, 1, slope, 50, 8)
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_top, 1, slope, 40 * left_or_right, 10)
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_top, 1, -slope, 40 * -left_or_right, 10)
             slope = slope + 1
 
         elif up <= 5 and length <= 33:
@@ -130,7 +198,7 @@ def errorLoop(slope, up, length):
             slice_gm_tmp = drawLine(slice_gm_tmp, prev_topmost, 1, 0, -25, up)
             up = up + 1
 
-        elif length <= 33:
+        elif length <= 40:
             slice_gm_tmp = drawLine(slice_gm_tmp, prev_topmost, 1, 0, length, 0)
             slice_gm_tmp = drawLine(slice_gm_tmp, prev_topmost, 1, 0, -length, 0)
             length = length + 1
@@ -138,50 +206,83 @@ def errorLoop(slope, up, length):
         else:
             slice_gm_tmp = drawLine(slice_gm_tmp, prev_topmost, 1, 0, length, 0)
             slice_gm_tmp = drawLine(slice_gm_tmp, prev_topmost, 1, 0, -length, 0)
-            slice_gm_tmp = drawLine(slice_gm_tmp, prev_top, 1, 5, 50, 8)
+            # slice_gm_tmp = drawLine(slice_gm_tmp, prev_top, 1, 5, 50, 8)
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_top, 1, slope, 50 * left_or_right, 10)
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_top, 1, -slope, 50 * -left_or_right, 10)
 
             last_try = True
 
-        # vis.show_img(slice_gm_tmp)
-
         slice_gm_tmp, contours_tmp, hierarchy_tmp = processFrame(slice_gm_tmp)
-
-        slice_tmp = copy.deepcopy(slice_tot)
+        slice_tmp = copy.deepcopy(slice)
 
         count_left = []
+        count_right = []
+
         gm_no_tl = []
 
         slice_tmp = drawFrame(contours_tmp, hierarchy_tmp, slice_gm_tmp, slice_tmp, (0, 255, 0), 0)
-        print ("len " + str(len(count_left)))
 
-        difference = (vis.getTotalArea(count_left) - prev_area)
-        print ("Difference = " + str(difference))
+        if left_or_right == 1:
+            count = count_left
+        else:
+            count = count_right
 
+        difference = (vis.getTotalArea(count) - prev_area)
+        print ("difference = " + str(difference))
 
-    return slice_tmp
+    #If this is executed, it means that a TL was detected during last try, so it should be deactivated again
+    if last_try:
+        last_try = False
+
+    return slice_tmp, slice_gm_tmp
 
 def fillPrevs():
 
-    global prev_top
-    global prev_topmost
-    global prev_area
+    global prev_top_left
+    global prev_top_right
+
+    global prev_topmost_left
+    global prev_topmost_right
+
+    global prev_area_left
+    global prev_area_right
+
     global prev_convex_area
+    global prev_max
+
     global count_left
     global count_right
+
     global gm_no_tl
+
     global slice_tmp
 
 
     if len(count_left) > 0:
-        prev_top = vis.getCentroid(vis.getBiggerArea(count_left))
-        slice_tmp = drawLine(slice_tmp, prev_top, 1, 6, 50, 8)
-        prev_topmost = vis.getTopmost(vis.getBiggerArea(count_left))
+        # prev_top_left = vis.getCentroid(vis.getBiggerArea(count_left))
+        prev_top_left = vis.getLeftmost(vis.getBiggerArea(count_left))
+        prev_topmost_left = vis.getTopmost(vis.getBiggerArea(count_left))
+        # if prev_topmost_left[0] < prev_top_left[0] and prev_topmost_left[1] > prev_top_left[1] + 10:
+        #     slice_tmp = drawLine2(slice_tmp, prev_top_left, prev_topmost_left)
+        # else:
+        # slice_tmp = drawLine(slice_tmp, prev_top_left, 1, 8, 30, 8)
+        # slice_tmp = drawLine(slice_tmp, prev_top_left, 1, -8, -30, 8)
 
 
-    prev_area = vis.getTotalArea(count_left)
+    if len(count_right) > 0:
+        # prev_top_right = vis.getCentroid(vis.getBiggerArea(count_right))
+        prev_top_right = vis.getRightmost(vis.getBiggerArea(count_right))
+        # slice_tmp = drawLine(slice_tmp, prev_top_right, 1, 8, -30, 8)
+        # slice_tmp = drawLine(slice_tmp, prev_top_right, 1, -8, 30, 8)
+        prev_topmost_right = vis.getTopmost(vis.getBiggerArea(count_right))
+
+
+    prev_area_left = vis.getTotalArea(count_left)
+    prev_area_right = vis.getTotalArea(count_right)
+
     prev_convex_area = vis.getMaxConvex(gm_no_tl)
 
-
+    # prev_max = vis.getBiggerArea(gm_no_tl)
 
 
 ########################################################################################################
@@ -203,8 +304,8 @@ i3tcsf_data = i3tcsf.get_fdata()
 
 #Percentages of the brain where the temporal lobe should be
 
-tl_start = 0.75 #Approx at 25% (down-up) the TL starts to appear
-tl_end = 0.60 #Approx at 40% (down-up) the TL starts to merge with the rest of the brain
+tl_start = 0.25 #Approx at 25% (down-up) the TL starts to appear
+tl_end = 0.40 #Approx at 40% (down-up) the TL starts to merge with the rest of the brain
 
 tl_start_slice = int(i3t_data.shape[1] * tl_start)
 tl_end_slice = int(i3t_data.shape[1] * tl_end)
@@ -215,28 +316,44 @@ slice_norm = []
 
 #Load data in arrays
 
-for i in range (i3t_data.shape[1] - 1, 0, -1):
-    if tl_end_slice < i < tl_start_slice:
-        slice_tl.append([i3t_data[:, i, :].T, i3tgm_data[:, i, :].T, i3twm_data[:, i, :].T, i3tcsf_data[:, i, :].T])
-    else:
-        slice_norm.append([i3t_data[:, i, :].T, i3tgm_data[:, i, :].T, i3twm_data[:, i, :].T, i3tcsf_data[:, i, :].T])
+# for i in range (i3t_data.shape[1] - 1, 0, -1):
+#     if tl_end_slice < i < tl_start_slice:
+#         slice_tl.append([i3t_data[:, i, :].T, i3tgm_data[:, i, :].T, i3twm_data[:, i, :].T, i3tcsf_data[:, i, :].T])
+#     else:
+#         slice_norm.append([i3t_data[:, i, :].T, i3tgm_data[:, i, :].T, i3twm_data[:, i, :].T, i3tcsf_data[:, i, :].T])
+
+for i in range(i3t_data.shape[1] - 1, 0, -1):
+    slice_norm.append([i3t_data[:, i, :].T, i3tgm_data[:, i, :].T, i3twm_data[:, i, :].T, i3tcsf_data[:, i, :].T])
 
 
 #Loop through all the slices
 
-for i in range(len(slice_tl)):
+# print tl_start_slice
+# print tl_end_slice
 
+for i in range(len(slice_norm)):
+
+
+    if i == tl_start_slice:
+        detecting = True
+
+    if i == tl_end_slice:
+        detecting = False
     #Cleaning arrays
 
     count_right = []
     count_left = []
     gm_no_tl = []
 
-    slice_tot = slice_tl[i][0]
-    slice_gm = slice_tl[i][1]
-    slice_wm = slice_tl[i][2]
-    slice_csf = slice_tl[i][3]
+    # slice_tot = slice_tl[i][0]
+    # slice_gm = slice_tl[i][1]
+    # slice_wm = slice_tl[i][2]
+    # slice_csf = slice_tl[i][3]
 
+    slice_tot = slice_norm[i][0]
+    slice_gm = slice_norm[i][1]
+    slice_wm = slice_norm[i][2]
+    slice_csf = slice_norm[i][3]
 
     #Convert to datatype understandable by OpenCV
 
@@ -269,9 +386,8 @@ for i in range(len(slice_tl)):
     slice_tmp = drawFrame(contours_gm, hierarchy_gm, slice_gm, slice_tmp, (0, 255, 0), 0)
 
     if detecting:
-        print len(slice_tmp)
-        slice_tmp = errorLoop(5, 0, 25)
-        print len(slice_tmp)
+        slice_tmp, slice_gm_tmp = errorLoop(slice_tot, slice_gm, 10, 0, 30, 1)
+        slice_tmp, slice_gm_tmp = errorLoop(slice_tmp, slice_gm_tmp, 10, 0, 30, -1)
 
     if len(slice_tmp) == 0:
         detecting = False
@@ -280,6 +396,8 @@ for i in range(len(slice_tl)):
 
 
     fillPrevs()
+    # slice_tmp = drawEllipse(slice_tmp, prev_max)
+    # slice_tmp = drawConvexDefects(slice_tmp, prev_max)
 
     started = True
 
@@ -288,8 +406,11 @@ for i in range(len(slice_tl)):
     slice_tmp = drawFrame(contours_csf, hierarchy_csf, slice_csf, slice_tmp, (0, 0, 255), 2)
 
 
+
     slice_tot = slice_tmp
 
-    fig, axes = plt.subplots(1, 1, figsize=[25, 7])
-    axes.imshow(slice_tot, cmap="gray", origin="lower")
-    plt.show()
+    print "Saving image " + str(i)
+    vis.show_img(slice_tot, i)
+    # fig, axes = plt.subplots(1, 1, figsize=[25, 7])
+    # axes.imshow(slice_tot, cmap="gray", origin="lower")
+    # plt.show()
