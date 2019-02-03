@@ -2,9 +2,257 @@ import cv2
 
 import nibabel as nib
 import numpy as np
-import random
-import matplotlib.pyplot as plt
+import copy
+import vision_functions as vis
 
+count_left = [] #Temporal lobes detected on left side of image
+count_right = [] #Temporal lobes detected on right side of image
+
+tl_internal = [] #Lobes of white matter
+gm_no_tl = [] #Gray matter that doesn't belong to temporal lobe
+
+prev_area_left = 0 #Total area of previous left lobes
+prev_area_right = 0 #Total area of previous right lobes
+
+prev_convex_area = [] #Total area of previous max convex hull (no temporal lobe)
+
+prev_centroid_left = 0 #Centroid of previous max left lobe
+prev_centroid_right = 0 #Centroid of previous max right lobe
+
+prev_topmost_left = 0 #Topmost point of previous max left lobe
+prev_topmost_right = 0 #Topmost point of previous max right lobe
+
+started = False #Used to avoid errors with cv2.pointPolygonTest()
+last_try = False #If it's true, it's considered there is no more temporal lobe
+detecting = False #If it's false, the program doesn't try to detect temporal lobe
+
+def drawConvexDefects(slice, cnt):
+
+
+    if cv2.isContourConvex(cnt):
+        return slice
+
+    hull = cv2.convexHull(cnt, returnPoints= False)
+    defects = cv2.convexityDefects(cnt, hull)
+
+    if defects is None:
+        return slice
+
+    for i in range(defects.shape[0]):
+        s, e, f, d = defects[i,0]
+        start = tuple(cnt[s][0])
+        end = tuple(cnt[e][0])
+        far = tuple(cnt[f][0])
+        if d > 600:
+            slice = cv2.circle(slice, far, 1, [255, 127, 0], -1)
+            if len(tl_internal) == 0 or vis.getTotalArea(tl_internal) < 20:
+                slice = cv2.line(slice, far, vis.getCentroid(cnt), [0, 0, 0], 1)
+
+    return slice
+
+def drawFrame(contours, slice_ori, slice_dest, color, c_type):
+
+    global gm_no_tl
+    global tl_internal
+
+    tl_internal = []
+
+    for i in range(len(contours)):
+        if detecting and checkLobe(contours[i], slice_ori) and c_type < 2:
+            if c_type == 1:
+                tl_internal.append(contours[i])
+            cv2.drawContours(slice_dest, contours, i, (255 * c_type, 255, 255 * pow((c_type - 1), 2)), 1)
+        else:
+            if c_type == 0:
+                gm_no_tl.append(contours[i])
+            cv2.drawContours(slice_dest, contours, i, color, 1)
+
+    return slice_dest
+
+
+
+def processFrame(slice):
+    ret, thresh = cv2.threshold(slice, 127, 255, cv2.THRESH_OTSU)
+    slice, contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    return slice, contours, hierarchy
+
+
+def drawLine(slice, point, mult, slope, length, up):
+
+    slice = cv2.line(slice, (point[0], point[1] + up), (point[0] + length, point[1] + up - slope * mult), (0, 0, 0), 2)
+
+    return slice
+
+
+
+def checkLobe(cnt, slice):
+
+    global count_left
+    global count_right
+    global prev_convex_area
+
+    y, x = slice.shape
+
+    leftmost, rightmost, topmost, bottommost = vis.getExtremes(cnt)
+
+    len_thresh = x/7
+
+    #Temporal Lobe shouldn't be inside biggest blob
+    if started:
+        dist = cv2.pointPolygonTest(prev_convex_area, vis.getCentroid(cnt), False)
+        if dist >= 0:
+            return False
+
+    #Temporal lobe shouldn't be higher than half of the image (y axis)
+    if vis.isTooHigh(cnt, y/2):
+        return False
+
+    # Temporal lobe should be at left or right of the image (not in the middle)
+    if ((x / 2 - len_thresh) < leftmost[0]) and (rightmost[0] < (x / 2 + len_thresh)):
+        return False
+    elif ((x / 2 - len_thresh) >= leftmost[0]):
+        count_left.append(cnt)
+    elif (rightmost[0] > (x / 2 + len_thresh)):
+        count_right.append(cnt)
+
+    return True
+
+def errorLoop(slice, slice_thresh, slope, up, length, left_or_right):
+
+    global count_left
+    global count_right
+
+    global prev_area_left
+    global prev_area_right
+
+    global prev_centroid_left
+    global prev_centroid_right
+
+    global prev_topmost_left
+    global prev_topmost_right
+
+    global slice_tmp
+    global slice_tot
+    global slice_gm
+
+    global last_try
+
+    global gm_no_tl
+
+    count = []
+    prev_area = 0
+    prev_centroid = 0
+    prev_topmost = 0
+
+    slice_gm_tmp = copy.deepcopy(slice_thresh)
+
+    # 1 --> Left side | -1 --> Right side
+    if left_or_right == 1:
+        count = count_left
+        prev_area = prev_area_left
+        prev_centroid = prev_centroid_left
+        prev_topmost = prev_topmost_left
+    else:
+        count = count_right
+        prev_area = prev_area_right
+        prev_centroid = prev_centroid_right
+        prev_topmost = prev_topmost_right
+
+    difference = (vis.getTotalArea(count) - prev_area)
+    while (difference < (-prev_area/2) or (vis.getTotalArea(count) < 1000 and prev_area > 1000)):
+
+        if last_try:
+            return [], []
+
+
+        slice_gm_tmp = copy.deepcopy(slice_thresh)
+
+        if slope < 20:
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_centroid, 1, slope, 40 * left_or_right, 10)
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_centroid, 1, -slope, 40 * -left_or_right, 10)
+            slope = slope + 1
+
+        elif up <= 5 and length <= 33:
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_topmost, 1, 0, 25, up)
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_topmost, 1, 0, -25, up)
+            up = up + 1
+
+        elif length <= 40:
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_topmost, 1, 0, length, 0)
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_topmost, 1, 0, -length, 0)
+            length = length + 1
+
+        else:
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_topmost, 1, 0, length, 0)
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_topmost, 1, 0, -length, 0)
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_centroid, 1, slope, 50 * left_or_right, 10)
+            slice_gm_tmp = drawLine(slice_gm_tmp, prev_centroid, 1, -slope, 50 * -left_or_right, 10)
+
+            last_try = True
+
+        slice_gm_tmp, contours_tmp, hierarchy_tmp = processFrame(slice_gm_tmp)
+        slice_tmp = copy.deepcopy(slice)
+
+        count_left = []
+        count_right = []
+
+        gm_no_tl = []
+
+        slice_tmp = drawFrame(contours_tmp, slice_gm_tmp, slice_tmp, (0, 255, 0), 0)
+
+        if left_or_right == 1:
+            count = count_left
+        else:
+            count = count_right
+
+        difference = (vis.getTotalArea(count) - prev_area)
+
+    #If this is executed, it means that a TL was detected during last try, so it should be deactivated again
+    if last_try:
+        last_try = False
+
+    return slice_tmp, slice_gm_tmp
+
+def fillPrevs():
+
+    global prev_centroid_left
+    global prev_centroid_right
+
+    global prev_topmost_left
+    global prev_topmost_right
+
+    global prev_area_left
+    global prev_area_right
+
+    global prev_convex_area
+
+    global count_left
+    global count_right
+
+    global gm_no_tl
+
+    global slice_tmp
+
+
+    if len(count_left) > 0:
+        prev_centroid_left = vis.getLeftmost(vis.getBiggestArea(count_left))
+        prev_topmost_left = vis.getTopmost(vis.getBiggestArea(count_left))
+
+
+    if len(count_right) > 0:
+        prev_centroid_right = vis.getRightmost(vis.getBiggestArea(count_right))
+        prev_topmost_right = vis.getTopmost(vis.getBiggestArea(count_right))
+
+
+    prev_area_left = vis.getTotalArea(count_left)
+    prev_area_right = vis.getTotalArea(count_right)
+
+    prev_convex_area = vis.getMaxConvex(gm_no_tl)
+
+
+########################################################################################################
+########################################################################################################
 
 #Load data
 
@@ -17,216 +265,107 @@ i3tgm_data = i3tgm.get_fdata()
 i3twm_data = i3twm.get_fdata()
 i3tcsf_data = i3tcsf.get_fdata()
 
-#Get slices
-cut = 280
-
-slice_tot = i3t_data[:, cut, :].T
-slice_gm = i3tgm_data[:, cut, :].T
-slice_wm = i3twm_data[:, cut, :].T
-slice_csf = i3tcsf_data[:, cut, :].T
-
-
-#Convert to datatype understandable by OpenCV
-
-slice_tot = (slice_tot/256).astype(np.uint8)
-
-slice_tot = cv2.normalize(slice_tot, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
-slice_gm = cv2.normalize(slice_gm, dst=None, alpha=0, beta=65535, norm_type=cv2.NORM_MINMAX)
-slice_wm = cv2.normalize(slice_wm, dst=None, alpha=0, beta=65535, norm_type=cv2.NORM_MINMAX)
-slice_csf = cv2.normalize(slice_csf, dst=None, alpha=0, beta=65535, norm_type=cv2.NORM_MINMAX)
-
-slice_gm = (slice_gm/256).astype(np.uint8)
-slice_wm = (slice_wm/256).astype(np.uint8)
-slice_csf = (slice_csf/256).astype(np.uint8)
-
-#
-# cv2.imshow('sin filtros', slice_gm)
-# cv2.waitKey(0)
-# cv2.destroyAllWindows()
-#Conver to color and overlay the three slices of the different fluids
-
-# slice_gm = cv2.cvtColor(slice_gm, cv2.COLOR_GRAY2BGR)
-# slice_gm[:,:, 2] = 255
-# slice_wm = cv2.cvtColor(slice_wm, cv2.COLOR_GRAY2BGR)
-# slice_wm[:,:, 1] = 255
-# slice_csf = cv2.cvtColor(slice_csf, cv2.COLOR_GRAY2BGR)
-# slice_csf[:, :, 0] = 255
-# slice_prueba = cv2.add(slice_gm, slice_csf)
-# slice_prueba = cv2.add(slice_prueba, slice_wm)
-
-#Image filtering
-
-#Filtro normal
-#slice_gm = cv2.filter2D(slice_gm, -1, np.ones((5, 5), np.float32)/25)
-
-#Filtro de media
-#slice_gm = cv2.blur(slice_gm, (5, 5))
-
-#Filtro gaussiano
-# slice_gm = cv2.GaussianBlur(slice_gm, (3, 3), 0)
-
-#Filtro de mediana
-#slice_gm = cv2.medianBlur(slice_gm, 3)
-
-#Filtro bilateral
-# slice_gm = cv2.bilateralFilter(slice_gm, 9, 100, 100)
 
 
 
-#Transformaciones morfologicas
+#Percentages of the brain where the temporal lobe should be
 
-#Closing
-#mask = np.ones((3,3), np.uint8)
-# mask = cv2.getStructuringElement(cv2.MORPH_CROSS, (3,5))
-# slice_gm = cv2.morphologyEx(slice_gm, cv2.MORPH_ERODE, mask)
+tl_start = 0.25 #Approx at 25% (down-up) the TL starts to appear
+tl_end = 0.40 #Approx at 40% (down-up) the TL starts to merge with the rest of the brain
 
-#Dilation + erosion
-# slice_gm = cv2.erode(slice_gm, mask, iterations = 1)
-# slice_gm = cv2.dilate(slice_gm, mask, iterations =1)
-# mask = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
+tl_start_slice = int(i3t_data.shape[1] * tl_start)
+tl_end_slice = int(i3t_data.shape[1] * tl_end)
+slice_tl = []
+slice_norm = []
 
 
 
-#Transform images to binary images (Thresholding)
+#Load data in arrays
+
+for i in range(i3t_data.shape[1] - 1, 0, -1):
+    slice_norm.append([i3t_data[:, i, :].T, i3tgm_data[:, i, :].T, i3twm_data[:, i, :].T, i3tcsf_data[:, i, :].T])
+
+
+#Loop through all the slices
+
+for i in range(len(slice_norm)):
+
+
+    if i == tl_start_slice:
+        detecting = True
+
+    if i == tl_end_slice:
+        detecting = False
+    #Cleaning arrays
+
+    count_right = []
+    count_left = []
+    gm_no_tl = []
+
+    slice_tot = slice_norm[i][0]
+    slice_gm = slice_norm[i][1]
+    slice_wm = slice_norm[i][2]
+    slice_csf = slice_norm[i][3]
+
+    #Convert to datatype understandable by OpenCV
+
+    slice_tot = (slice_tot/256).astype(np.uint8)
+
+    slice_tot = cv2.normalize(slice_tot, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+    slice_gm = cv2.normalize(slice_gm, dst=None, alpha=0, beta=65535, norm_type=cv2.NORM_MINMAX)
+    slice_wm = cv2.normalize(slice_wm, dst=None, alpha=0, beta=65535, norm_type=cv2.NORM_MINMAX)
+    slice_csf = cv2.normalize(slice_csf, dst=None, alpha=0, beta=65535, norm_type=cv2.NORM_MINMAX)
+
+    slice_gm = (slice_gm/256).astype(np.uint8)
+    slice_wm = (slice_wm/256).astype(np.uint8)
+    slice_csf = (slice_csf/256).astype(np.uint8)
 
 
 
-# kernel = np.ones((3,3), np.uint8)
-# opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations = 2)
-#
-# sure_bg = cv2.dilate(opening, kernel, iterations = 3)
-#
-# dist_transform = cv2.distanceTransform(opening, cv2.DIST_L2, 5)
-# ret, sure_fg = cv2.threshold(dist_transform, 0.7*dist_transform.max(), 255, 0)
-#
-# sure_fg = np.uint8(sure_fg)
-# unknown = cv2.subtract(sure_bg, sure_fg)
-#
-# ret, markers = cv2.connectedComponents(sure_fg)
-# markers = markers + 1
-# markers[unknown == 255] = 0
-# markers = cv2.watershed(slice_gm, markers)
-#
-# slice_gm[markers == -1] = [255, 0, 0]
+    #Processing slices
 
-ret, thresh_gm = cv2.threshold(slice_gm, 127, 255, cv2.THRESH_OTSU)
-ret, thresh_wm = cv2.threshold(slice_wm, 127, 255, cv2.THRESH_OTSU)
-ret, thresh_csf = cv2.threshold(slice_csf, 127, 255, cv2.THRESH_OTSU)
-
-slice_gm, contours_gm, hierarchy_gm = cv2.findContours(thresh_gm, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-slice_wm, contours_wm, hierarchy_wm = cv2.findContours(thresh_wm, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-image_csf, contours_csf, hierarchy_csf = cv2.findContours(thresh_csf, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-# print hierarchy
-# print len(contours)
-slice_tot = cv2.cvtColor(slice_tot, cv2.COLOR_GRAY2BGR)
-# slice_gm = cv2.cvtColor(slice_gm, cv2.COLOR_GRAY2BGR)
-# slice_wm = cv2.cvtColor(slice_wm, cv2.COLOR_GRAY2BGR)
-# slice_csf = cv2.cvtColor(slice_csf, cv2.COLOR_GRAY2BGR)
-print slice_tot.shape
-
-min_thresh = 0
-
-def drawConvexDefects(cnt):
-    if cv2.isContourConvex(cnt):
-        return None
-
-    hull = cv2.convexHull(cnt, returnPoints= False)
-    defects = cv2.convexityDefects(cnt, hull)
+    slice_gm, contours_gm, hierarchy_gm = processFrame(slice_gm)
+    slice_wm, contours_wm, hierarchy_wm = processFrame(slice_wm)
+    slice_csf, contours_csf, hierarchy_csf = processFrame(slice_csf)
 
 
-    for i in range(defects.shape[0]):
-        s, e, f, d = defects[i,0]
-        start = tuple(cnt[s][0])
-        end = tuple(cnt[e][0])
-        far = tuple(cnt[f][0])
-        cv2.line(slice_tot, start, end, [125, 255, 76], 2)
-        cv2.circle(slice_tot, far, 1, [255, 0, 0], -1)
-
-def checkLobe(cnt, hierarchy, slice):
-    y, x = slice.shape
-    leftmost = tuple(cnt[cnt[:,:,0].argmin()][0])
-    rightmost = tuple(cnt[cnt[:, :, 0].argmax()][0])
-    topmost = tuple(cnt[cnt[:,:,1].argmax()][0])
-    bottommost = tuple(cnt[cnt[:,:,1].argmin()][0])
-
-    len_thresh = x/7
-    high_thresh = 10
+    slice_tot = cv2.cvtColor(slice_tot, cv2.COLOR_GRAY2BGR)
 
 
-    if ((x/2 - len_thresh) < leftmost[0]) and (rightmost[0] < (x/2 + len_thresh)):
-        return False
-
-    #Temporal lobe should be on the same half of the image
-    # if (rightmost[0] > x/2) and (leftmost[0] < x/2):
-    #     return False
-
-    #Temporal lobe shouldn't be higher than half of the image (y axis)
-    if topmost[1] > (y/2 - high_thresh):
-        return False
-
-    #Temporal lobe would be an external contour, so it shouldn't have parent or child
-    if hierarchy[2] != -1 or hierarchy[3] != -1:
-        return False
-
-    print (y/2 - high_thresh)
-    print bottommost
-    # print ("borde inferior = " + str((x/2 - len_thresh)))
-    # print ("borde superior = " + str((x/2 + len_thresh)))
-    # print hierarchy[3]
-    # print ("x = " + str(x))
-    # print ("y = " + str(y))
-    # print ("leftmost = " + str(leftmost))
-    # print ("rightmost = " + str(rightmost))
-    # print ("topmost = " + str(topmost))
-    # print ("topmost (y) = " + str(topmost[1]))
-    return True
-
-for i in range(len(contours_gm)):
-    # color = (random.randint(50, 255), random.randint(50, 255), random.randint(50, 255))
-    #cv2.drawContours(slice_tot, contours, i, color, cv2.FILLED)
-    if cv2.contourArea(contours_gm[i]) > min_thresh:
-        if checkLobe(contours_gm[i], hierarchy_gm[0][i], slice_gm):
-            cv2.drawContours(slice_tot, contours_gm, i, (0,255,255), 1)
-            # cv2.drawContours(slice_tot, [cv2.convexHull(contours_gm[i])], -1, (123, 25, 200), 1)
-        else:
-            cv2.drawContours(slice_tot, contours_gm, i, (0, 255, 0), 1)
-            # cv2.drawContours(slice_tot, [cv2.convexHull(contours_gm[i])], -1, (123, 25, 200), 1)
-        drawConvexDefects(contours_gm[i])
-        # cv2.drawContours(slice_gm, contours_gm, i, (0, 255, 0), 2)
-        # cv2.drawContours(slice_tot, contours_gm, i, color, 2)
-        # print cv2.contourArea(contours_gm[i])
-
-for i in range(len(contours_wm)):
-    if cv2.contourArea(contours_wm[i]) > min_thresh:
-        if checkLobe(contours_wm[i], hierarchy_wm[0][i], slice_wm):
-            cv2.drawContours(slice_tot, contours_wm, i, (255,255,0), 1)
-        else:
-            cv2.drawContours(slice_tot, contours_wm, i, (255, 0, 0), 1)
-
-# for i in range(len(contours_csf)):
-#     if cv2.contourArea(contours_csf[i]) > min_thresh:
-#         cv2.drawContours(slice_tot, contours_csf, i, (0, 0, 255), 1)
-
-# cv2.imshow('prueba', slice_tot)
-# # cv2.imshow('prueba', slice_gm)
-# cv2.waitKey(0)
-# cv2.destroyAllWindows()
+    slice_tmp = copy.deepcopy(slice_tot)
 
 
-#Show the image rotated
+    slice_tmp = drawFrame(contours_gm, slice_gm, slice_tmp, (0, 255, 0), 0)
 
-# rows, cols, channels = slice_prueba.shape
-# M = cv2.getRotationMatrix2D((cols/2, rows/2),180,1)
-# slice_prueba = cv2.warpAffine(slice_prueba, M, (cols, rows))
-# cv2.imshow('prueba', slice_prueba)
-# cv2.waitKey(0)
-# cv2.destroyAllWindows()
+    if detecting:
+        slice_tmp, slice_gm_tmp = errorLoop(slice_tot, slice_gm, 10, 0, 30, 1)
+        slice_tmp, slice_gm_tmp = errorLoop(slice_tmp, slice_gm_tmp, 10, 0, 30, -1)
+
+    if len(slice_tmp) == 0:
+        detecting = False
+        slice_tmp = copy.deepcopy(slice_tot)
+        slice_tmp = drawFrame(contours_gm, slice_gm, slice_tmp, (0, 255, 0), 0)
+        slice_tmp = drawFrame(contours_gm, slice_gm, slice_tmp, (0, 255, 0), 0)
 
 
-#Show the image with Matplotlib
+    fillPrevs()
 
-fig, axes = plt.subplots(1, 1, figsize=[25, 7])
-axes.imshow(slice_tot, cmap="gray", origin="lower")
-# axes.imshow(slice_gm, origin="lower")
-plt.show()
+    started = True
+
+    slice_tmp = drawFrame(contours_wm, slice_wm, slice_tmp, (255, 0, 0), 1)
+
+    if len(count_left) > 0 and detecting:
+        for j in range(len(count_left)):
+            slice_tmp = drawConvexDefects(slice_tmp, count_left[j])
+
+    if len(count_right) > 0 and detecting:
+        for k in range(len(count_right)):
+            slice_tmp = drawConvexDefects(slice_tmp, count_right[k])
+
+    slice_tmp = drawFrame(contours_csf, slice_csf, slice_tmp, (0, 0, 255), 2)
+
+
+    slice_tot = slice_tmp
+
+    print "Saving image " + str(i)
+    vis.show_img(slice_tot, i)

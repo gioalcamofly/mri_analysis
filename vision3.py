@@ -9,7 +9,10 @@ import math
 
 count_left = []
 count_right = []
+
+tl_internal = []
 gm_no_tl = []
+
 prev_area_left = 0
 prev_area_right = 0
 
@@ -22,48 +25,45 @@ prev_top_right = 0
 prev_topmost_left = 0
 prev_topmost_right = 0
 
-started = False
+started = False #Used to avoid errors with cv2.pointPolygonTest()
 last_try = False
 detecting = False
 
 def drawConvexDefects(slice, cnt):
 
+
     if cv2.isContourConvex(cnt):
-        return None
+        return slice
 
     hull = cv2.convexHull(cnt, returnPoints= False)
     defects = cv2.convexityDefects(cnt, hull)
 
+    if defects is None:
+        return slice
 
     for i in range(defects.shape[0]):
         s, e, f, d = defects[i,0]
         start = tuple(cnt[s][0])
         end = tuple(cnt[e][0])
         far = tuple(cnt[f][0])
-        cv2.line(slice, start, end, [0, 0, 0], 2)
-        # cv2.circle(slice, far, 1, [255, 0, 0], -1)
-
-    return slice
-
-def drawEllipse(slice, cnt):
-
-    centroid = vis.getCentroid(cnt)
-    leftmost, rightmost, topmost, bottommost = vis.getExtremes(cnt)
-
-
-    # ellipse = cv2.fitEllipse(cnt)
-    # slice = cv2.ellipse(slice, ellipse, (123, 134, 40), 2)
-
-    slice = cv2.ellipse(slice, centroid, (rightmost[0]  + 10 - centroid[0], topmost[1] - centroid[1]), 0, 0, 360, (0, 0, 0), 2)
+        if d > 600:
+            slice = cv2.circle(slice, far, 1, [255, 127, 0], -1)
+            if len(tl_internal) == 0 or vis.getTotalArea(tl_internal) < 20:
+                slice = cv2.line(slice, far, vis.getCentroid(cnt), [0, 0, 0], 1)
 
     return slice
 
 def drawFrame(contours, hierarchy, slice_ori, slice_dest, color, c_type):
 
     global gm_no_tl
+    global tl_internal
+
+    tl_internal = []
 
     for i in range(len(contours)):
         if detecting and checkLobe(contours[i], hierarchy[0][i], slice_ori) and c_type < 2:
+            if c_type == 1:
+                tl_internal.append(contours[i])
             cv2.drawContours(slice_dest, contours, i, (255 * c_type, 255, 255 * pow((c_type - 1), 2)), 1)
         else:
             if c_type == 0:
@@ -107,7 +107,6 @@ def checkLobe(cnt, hierarchy, slice):
     leftmost, rightmost, topmost, bottommost = vis.getExtremes(cnt)
 
     len_thresh = x/7
-    high_thresh = 0
 
     #Temporal Lobe shouldn't be inside biggest blob
     if started:
@@ -116,14 +115,8 @@ def checkLobe(cnt, hierarchy, slice):
             return False
 
     #Temporal lobe shouldn't be higher than half of the image (y axis)
-    # if topmost[1] > (y/2 + high_thresh):
-    #     return False
     if vis.isTooHigh(cnt, y/2):
         return False
-
-    #Temporal lobe would be an external contour, so it shouldn't have parent or child
-    # if hierarchy[3] != -1:
-    #     return False
 
     # Temporal lobe should be at left or right of the image (not in the middle)
     if ((x / 2 - len_thresh) < leftmost[0]) and (rightmost[0] < (x / 2 + len_thresh)):
@@ -179,7 +172,6 @@ def errorLoop(slice, slice_thresh, slope, up, length, left_or_right):
         prev_topmost = prev_topmost_right
 
     difference = (vis.getTotalArea(count) - prev_area)
-    print ("difference = " + str(difference))
     while (difference < (-prev_area/2) or (vis.getTotalArea(count) < 1000 and prev_area > 1000)):
 
         if last_try:
@@ -228,7 +220,6 @@ def errorLoop(slice, slice_thresh, slope, up, length, left_or_right):
             count = count_right
 
         difference = (vis.getTotalArea(count) - prev_area)
-        print ("difference = " + str(difference))
 
     #If this is executed, it means that a TL was detected during last try, so it should be deactivated again
     if last_try:
@@ -259,9 +250,9 @@ def fillPrevs():
 
 
     if len(count_left) > 0:
-        # prev_top_left = vis.getCentroid(vis.getBiggerArea(count_left))
-        prev_top_left = vis.getLeftmost(vis.getBiggerArea(count_left))
-        prev_topmost_left = vis.getTopmost(vis.getBiggerArea(count_left))
+        # prev_top_left = vis.getCentroid(vis.getBiggestArea(count_left))
+        prev_top_left = vis.getLeftmost(vis.getBiggestArea(count_left))
+        prev_topmost_left = vis.getTopmost(vis.getBiggestArea(count_left))
         # if prev_topmost_left[0] < prev_top_left[0] and prev_topmost_left[1] > prev_top_left[1] + 10:
         #     slice_tmp = drawLine2(slice_tmp, prev_top_left, prev_topmost_left)
         # else:
@@ -270,11 +261,11 @@ def fillPrevs():
 
 
     if len(count_right) > 0:
-        # prev_top_right = vis.getCentroid(vis.getBiggerArea(count_right))
-        prev_top_right = vis.getRightmost(vis.getBiggerArea(count_right))
+        # prev_top_right = vis.getCentroid(vis.getBiggestArea(count_right))
+        prev_top_right = vis.getRightmost(vis.getBiggestArea(count_right))
         # slice_tmp = drawLine(slice_tmp, prev_top_right, 1, 8, -30, 8)
         # slice_tmp = drawLine(slice_tmp, prev_top_right, 1, -8, 30, 8)
-        prev_topmost_right = vis.getTopmost(vis.getBiggerArea(count_right))
+        prev_topmost_right = vis.getTopmost(vis.getBiggestArea(count_right))
 
 
     prev_area_left = vis.getTotalArea(count_left)
@@ -282,7 +273,7 @@ def fillPrevs():
 
     prev_convex_area = vis.getMaxConvex(gm_no_tl)
 
-    # prev_max = vis.getBiggerArea(gm_no_tl)
+    # prev_max = vis.getBiggestArea(gm_no_tl)
 
 
 ########################################################################################################
@@ -328,10 +319,7 @@ for i in range(i3t_data.shape[1] - 1, 0, -1):
 
 #Loop through all the slices
 
-# print tl_start_slice
-# print tl_end_slice
-
-for i in range(len(slice_norm)):
+for i in range(90, len(slice_norm)):
 
 
     if i == tl_start_slice:
@@ -393,24 +381,30 @@ for i in range(len(slice_norm)):
         detecting = False
         slice_tmp = copy.deepcopy(slice_tot)
         slice_tmp = drawFrame(contours_gm, hierarchy_gm, slice_gm, slice_tmp, (0, 255, 0), 0)
+        slice_tmp = drawFrame(contours_gm, hierarchy_gm, slice_gm, slice_tmp, (0, 255, 0), 0)
 
 
     fillPrevs()
-    # slice_tmp = drawEllipse(slice_tmp, prev_max)
-    # slice_tmp = drawConvexDefects(slice_tmp, prev_max)
 
     started = True
 
     slice_tmp = drawFrame(contours_wm, hierarchy_wm, slice_wm, slice_tmp, (255, 0, 0), 1)
 
-    slice_tmp = drawFrame(contours_csf, hierarchy_csf, slice_csf, slice_tmp, (0, 0, 255), 2)
+    if len(count_left) > 0:
+        for i in range(len(count_left)):
+            slice_tmp = drawConvexDefects(slice_tmp, count_left[i])
 
+    if len(count_right) > 0:
+        for i in range(len(count_right)):
+            slice_tmp = drawConvexDefects(slice_tmp, count_right[i])
+
+    slice_tmp = drawFrame(contours_csf, hierarchy_csf, slice_csf, slice_tmp, (0, 0, 255), 2)
 
 
     slice_tot = slice_tmp
 
-    print "Saving image " + str(i)
-    vis.show_img(slice_tot, i)
-    # fig, axes = plt.subplots(1, 1, figsize=[25, 7])
-    # axes.imshow(slice_tot, cmap="gray", origin="lower")
-    # plt.show()
+    # print "Saving image " + str(i)
+    # vis.show_img(slice_tot, i)
+    fig, axes = plt.subplots(1, 1, figsize=[25, 7])
+    axes.imshow(slice_tot, cmap="gray", origin="lower")
+    plt.show()

@@ -17,7 +17,7 @@ def getMaxConvex(cnts):
 
     return cnts[maxIndex]
 
-def getBiggerArea(cnts):
+def getBiggestArea(cnts):
 
     topIndex = 0
     for i in range(len(cnts)):
@@ -73,7 +73,7 @@ def getExtremes(cnt):
     return (leftmost, rightmost, topmost, bottommost)
 
 def show_img(img, i):
-    fig, axes = plt.subplots(1, 1, figsize=[25, 7])
+    fig, axes = plt.subplots(1, 1, figsize=[12, 4])
     axes.imshow(img, cmap="gray", origin="lower")
     # plt.show()
     fig.savefig('/home/giovanni/Documentos/UNED/vision_artificial/memoria_0/out/img' + str(i) + '.png')
